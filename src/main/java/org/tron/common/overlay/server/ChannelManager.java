@@ -33,6 +33,7 @@ import java.util.concurrent.*;
 import static org.tron.common.overlay.message.ReasonCode.DUPLICATE_PEER;
 import static org.tron.common.overlay.message.ReasonCode.TOO_MANY_PEERS;
 
+
 @Component
 public class ChannelManager {
 
@@ -50,7 +51,7 @@ public class ChannelManager {
 
   private Args args = Args.getInstance();
 
-  private int maxActivePeers = args.getNodeMaxActiveNodes() > 0 ? args.getNodeMaxActiveNodes() : 3000;;
+  private int maxActivePeers = args.getNodeMaxActiveNodes() > 0 ? args.getNodeMaxActiveNodes() : 30;
 
   private PeerServer peerServer;
 
@@ -142,7 +143,6 @@ public class ChannelManager {
   }
 
   public void add(Channel peer) {
-    logger.info("Add new peer: {}", peer);
     newPeers.add(peer);
   }
 

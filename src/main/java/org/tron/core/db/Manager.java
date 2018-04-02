@@ -1,6 +1,7 @@
 package org.tron.core.db;
 
 import static org.tron.core.config.Parameter.ChainConstant.SOLIDIFIED_THRESHOLD;
+import static org.tron.core.config.Parameter.ChainConstant.WITNESS_PAY_PER_BLOCK;
 import static org.tron.protos.Protocol.Transaction.Contract.ContractType.TransferAssetContract;
 import static org.tron.protos.Protocol.Transaction.Contract.ContractType.TransferContract;
 
@@ -86,6 +87,7 @@ public class Manager {
   @Getter
   private BlockCapsule head;
   private RevokingDatabase revokingStore;
+  @Getter
   private DialogOptional<Dialog> dialog = DialogOptional.empty();
 
   @Getter
@@ -113,21 +115,28 @@ public class Manager {
     this.dynamicPropertiesStore = dynamicPropertiesStore;
   }
 
-  public List<TransactionCapsule> getPendingTrxs() {
-    return this.pendingTrxs;
+  public List<TransactionCapsule> getPendingTransactions() {
+    return this.pendingTransactions;
+  }
+
+  public List<TransactionCapsule> getPoppedTransactions() {
+    return this.popedTransactions;
   }
 
 
-  // transaction cache
-  private List<TransactionCapsule> pendingTrxs;
+  // transactions cache
+  private List<TransactionCapsule> pendingTransactions;
 
-  volatile private List<WitnessCapsule> wits = new ArrayList<>();
+  // transactions popped
+  private List<TransactionCapsule> popedTransactions = new ArrayList<>();
+
+  private volatile List<WitnessCapsule> wits = new ArrayList<>();
+
   private ReadWriteLock witsLock = new ReentrantReadWriteLock();
   private Lock witsRead = witsLock.readLock();
   private Lock witsWrite = witsLock.writeLock();
 
   // witness
-
   public List<WitnessCapsule> getWitnesses() {
     witsRead.lock();
     try {
@@ -252,22 +261,8 @@ public class Manager {
     this.numHashCache.initDB();
     this.khaosDb = new KhaosDatabase("block" + "_KDB");
 
-    this.pendingTrxs = new ArrayList<>();
-    try {
-      this.initGenesis();
-    } catch (ContractValidateException e) {
-      logger.error(e.getMessage());
-      System.exit(-1);
-    } catch (ContractExeException e) {
-      logger.error(e.getMessage());
-      System.exit(-1);
-    } catch (ValidateSignatureException e) {
-      logger.error(e.getMessage());
-      System.exit(-1);
-    } catch (UnLinkedBlockException e) {
-      logger.error(e.getMessage());
-      System.exit(-1);
-    }
+    this.pendingTransactions = new ArrayList<>();
+    this.initGenesis();
     this.updateWits();
     this.setShuffledWitnessStates(getWitnesses());
     this.initHeadBlock(Sha256Hash.wrap(this.dynamicPropertiesStore.getLatestBlockHeaderHash()));
@@ -285,9 +280,7 @@ public class Manager {
   /**
    * init genesis block.
    */
-  public void initGenesis()
-      throws ContractValidateException, ContractExeException,
-      ValidateSignatureException, UnLinkedBlockException {
+  public void initGenesis() {
     this.genesisBlock = BlockUtil.newGenesisBlockCapsule();
     if (this.containBlock(this.genesisBlock.getBlockId())) {
       Args.getInstance().setChainId(this.genesisBlock.getBlockId().toString());
@@ -403,11 +396,11 @@ public class Manager {
     try (
         RevokingStore.Dialog tmpDialog = revokingStore.buildDialog()) {
       processTransaction(trx);
-      pendingTrxs.add(trx);
+      pendingTransactions.add(trx);
 
       tmpDialog.merge();
     } catch (RevokingStoreIllegalStateException e) {
-      e.printStackTrace();
+      logger.debug(e.getMessage(), e);
     }
     return true;
   }
@@ -422,8 +415,12 @@ public class Manager {
         AccountCapsule accountCapsule = this.getAccountStore().get(address);
         long balacne = accountCapsule.getBalance();
         long latestOperationTime = accountCapsule.getLatestOperationTime();
-        int latstTransNumberInBlock = this.head.getTransactions().size();
-        doValidateFreq(balacne, latstTransNumberInBlock, latestOperationTime);
+        if (latestOperationTime != 0) {
+          int latstTransNumberInBlock = this.head.getTransactions().size();
+          doValidateFreq(balacne, latstTransNumberInBlock, latestOperationTime);
+        } else {
+          accountCapsule.setLatestOperationTime(Time.getCurrentMillis());
+        }
       }
     }
   }
@@ -449,9 +446,13 @@ public class Manager {
       revokingStore.pop();
       head = getBlockStore().get(getBlockIdByNum(oldHeadBlock.getNum() - 1).getBytes());
     } catch (RevokingStoreIllegalStateException e) {
-      e.printStackTrace();
+      logger.debug(e.getMessage(), e);
     }
     khaosDb.pop();
+    for (TransactionCapsule trx : oldHeadBlock.getTransactions()) {
+      popedTransactions.add(trx);
+    }
+
     // todo process the trans in the poped block.
 
   }
@@ -479,13 +480,13 @@ public class Manager {
           tmpDialog.commit();
           head = item;
         } catch (ValidateSignatureException e) {
-          e.printStackTrace();
+          logger.debug(e.getMessage(), e);
         } catch (ContractValidateException e) {
-          e.printStackTrace();
+          logger.debug(e.getMessage(), e);
         } catch (ContractExeException e) {
-          e.printStackTrace();
+          logger.debug(e.getMessage(), e);
         } catch (RevokingStoreIllegalStateException e) {
-          e.printStackTrace();
+          logger.debug(e.getMessage(), e);
         }
       });
       return;
@@ -532,77 +533,53 @@ public class Manager {
       throws ValidateSignatureException, ContractValidateException,
       ContractExeException, UnLinkedBlockException {
 
-    List<TransactionCapsule> pendingTrxsTmp = new ArrayList<>(pendingTrxs);
-    //TODO: optimize performance here.
-    pendingTrxs.clear();
-    dialog.reset();
+    try (PendingManager pm = new PendingManager(this)) {
+      //todo: check block's validity
+      if (!block.generatedByMyself) {
+        if (!block.validateSignature()) {
+          logger.info("The siganature is not validated.");
+          //TODO: throw exception here.
+          return;
+        }
 
-    //todo: check block's validity
-    if (!block.generatedByMyself) {
-      if (!block.validateSignature()) {
-        logger.info("The siganature is not validated.");
-        //TODO: throw exception here.
-        return;
+        if (!block.calcMerkleRoot().equals(block.getMerkleRoot())) {
+          logger.info("The merkler root doesn't match, Calc result is " + block.calcMerkleRoot()
+              + " , the headers is " + block.getMerkleRoot());
+          // TODO:throw exception here.
+          return;
+        }
       }
-
-      if (!block.calcMerkleRoot().equals(block.getMerkleRoot())) {
-        logger.info("The merkler root doesn't match, Calc result is " + block.calcMerkleRoot()
-            + " , the headers is " + block.getMerkleRoot());
-        //TODO: throw exception here.
-        return;
+      try {
+        validateWitnessSchedule(block); // direct return ,need test
+      } catch (Exception ex) {
+        logger.error("validateWitnessSchedule error", ex);
       }
+      BlockCapsule newBlock = this.khaosDb.push(block);
+      //DB don't need lower block
+      if (head == null) {
+        if (newBlock.getNum() != 0) {
+          return;
+        }
+      } else {
+        if (newBlock.getNum() <= head.getNum()) {
+          return;
+        }
+        //switch fork
+        if (!newBlock.getParentHash().equals(head.getBlockId())) {
+          switchFork(newBlock);
+        }
+        try (Dialog tmpDialog = revokingStore.buildDialog()) {
+          this.processBlock(newBlock);
+          tmpDialog.commit();
+        } catch (RevokingStoreIllegalStateException e) {
+          logger.debug(e.getMessage(), e);
+        }
+      }
+      blockStore.put(block.getBlockId().getBytes(), block);
+      this.numHashCache.putData(ByteArray.fromLong(block.getNum()), block.getBlockId().getBytes());
+      //refreshHead(newBlock);
+      logger.info("save block: " + newBlock);
     }
-
-    try {
-      validateWitnessSchedule(block); // direct return ,need test
-    } catch (Exception ex) {
-      logger.error("validateWitnessSchedule error", ex);
-    }
-
-    BlockCapsule newBlock = this.khaosDb.push(block);
-    //DB don't need lower block
-    if (head == null) {
-      if (newBlock.getNum() != 0) {
-        return;
-      }
-    } else {
-      if (newBlock.getNum() <= head.getNum()) {
-        return;
-      }
-      //switch fork
-      if (!newBlock.getParentHash().equals(head.getBlockId())) {
-        switchFork(newBlock);
-      }
-
-      try (Dialog tmpDialog = revokingStore.buildDialog()) {
-        this.processBlock(newBlock);
-        tmpDialog.commit();
-      } catch (RevokingStoreIllegalStateException e) {
-        e.printStackTrace();
-      }
-    }
-
-    //filter trxs
-    pendingTrxsTmp.stream()
-        .filter(trx -> transactionStore.get(trx.getTransactionId().getBytes()) == null)
-        .forEach(trx -> {
-          try {
-            pushTransactions(trx);
-          } catch (ValidateSignatureException e) {
-            e.printStackTrace();
-          } catch (ContractValidateException e) {
-            e.printStackTrace();
-          } catch (ContractExeException e) {
-            e.printStackTrace();
-          } catch (HighFreqException e) {
-            e.printStackTrace();
-          }
-        });
-
-    blockStore.put(block.getBlockId().getBytes(), block);
-    this.numHashCache.putData(ByteArray.fromLong(block.getNum()), block.getBlockId().getBytes());
-    //refreshHead(newBlock);
-    logger.info("save block: " + newBlock);
   }
 
   public void updateDynamicProperties(BlockCapsule block) {
@@ -763,7 +740,7 @@ public class Manager {
     dialog.reset();
     dialog = DialogOptional.of(revokingStore.buildDialog());
 
-    Iterator iterator = pendingTrxs.iterator();
+    Iterator iterator = pendingTransactions.iterator();
     while (iterator.hasNext()) {
       TransactionCapsule trx = (TransactionCapsule) iterator.next();
       currentTrxSize += RamUsageEstimator.sizeOf(trx);
@@ -781,12 +758,12 @@ public class Manager {
         iterator.remove();
       } catch (ContractExeException e) {
         logger.info("contract not processed during execute");
-        e.printStackTrace();
+        logger.debug(e.getMessage(), e);
       } catch (ContractValidateException e) {
         logger.info("contract not processed during validate");
-        e.printStackTrace();
+        logger.debug(e.getMessage(), e);
       } catch (RevokingStoreIllegalStateException e) {
-        e.printStackTrace();
+        logger.debug(e.getMessage(), e);
       }
     }
 
@@ -796,7 +773,8 @@ public class Manager {
       logger.info("{} transactions over the block size limit", postponedTrxCount);
     }
 
-    logger.info("postponedTrxCount[" + postponedTrxCount + "],TrxLeft[" + pendingTrxs.size() + "]");
+    logger.info(
+        "postponedTrxCount[" + postponedTrxCount + "],TrxLeft[" + pendingTransactions.size() + "]");
 
     blockCapsule.setMerkleRoot();
     blockCapsule.sign(privateKey);
@@ -909,14 +887,14 @@ public class Manager {
     AccountCapsule sun = accountStore.getSun();
 
     try {
-      adjustBalance(sun.getAddress().toByteArray(), -3);
+      adjustBalance(sun.getAddress().toByteArray(), -WITNESS_PAY_PER_BLOCK);
     } catch (BalanceInsufficientException e) {
 
     }
     try {
-      adjustBalance(witnessCapsule.getAddress().toByteArray(), 3);
+      adjustBalance(witnessCapsule.getAddress().toByteArray(), WITNESS_PAY_PER_BLOCK);
     } catch (BalanceInsufficientException e) {
-      e.printStackTrace();
+      logger.debug(e.getMessage(), e);
     }
 
   }
@@ -991,10 +969,10 @@ public class Manager {
 
     final Map<ByteString, Long> countWitness = Maps.newHashMap();
     final List<AccountCapsule> accountList = this.accountStore.getAllAccounts();
-    logger.info("there is account List size is {}", accountList.size());
+    //logger.info("there is account List size is {}", accountList.size());
     accountList.forEach(account -> {
-      logger.info("there is account ,account address is {}",
-          account.createReadableString());
+//      logger.info("there is account ,account address is {}",
+//          account.createReadableString());
 
       Optional<Long> sum = account.getVotesList().stream().map(vote -> vote.getVoteCount())
           .reduce((a, b) -> a + b);
@@ -1112,7 +1090,7 @@ public class Manager {
       if (b.getVoteCount() != a.getVoteCount()) {
         return (int) (b.getVoteCount() - a.getVoteCount());
       } else {
-        return Long.compare(b.getAddress().hashCode(),a.getAddress().hashCode());
+        return Long.compare(b.getAddress().hashCode(), a.getAddress().hashCode());
       }
     });
   }

@@ -25,6 +25,10 @@ service Wallet {
 
   };
 
+  rpc UpdateAccount (AccountUpdateContract) returns (Transaction) {
+
+  };
+
   rpc CreateAccount (AccountCreateContract) returns (Transaction) {
 
   };
@@ -73,6 +77,9 @@ service Wallet {
 
   }
   rpc GetBlockByNum (NumberMessage) returns (Block) {
+
+  }
+  rpc TotalTransaction (EmptyMessage) returns (NumberMessage) {
 
   }
 };

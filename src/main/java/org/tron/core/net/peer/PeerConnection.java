@@ -1,5 +1,12 @@
 package org.tron.core.net.peer;
 
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.LinkedBlockingQueue;
 import javafx.util.Pair;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Scope;
@@ -7,10 +14,8 @@ import org.springframework.stereotype.Component;
 import org.tron.common.overlay.message.Message;
 import org.tron.common.overlay.server.Channel;
 import org.tron.common.utils.Sha256Hash;
+import org.tron.common.utils.Time;
 import org.tron.core.capsule.BlockCapsule.BlockId;
-
-import java.util.*;
-import java.util.concurrent.LinkedBlockingQueue;
 
 @Slf4j
 @Component
@@ -21,6 +26,16 @@ public class PeerConnection extends Channel{
   public int hashCode() {
     return super.hashCode();
   }
+
+  public long getConnectTime() {
+    return connectTime;
+  }
+
+  public void setConnectTime(long connectTime) {
+    this.connectTime = connectTime;
+  }
+
+  private long connectTime;
 
   //broadcast
   private Queue<Sha256Hash> invToUs = new LinkedBlockingQueue<>();
@@ -51,7 +66,7 @@ public class PeerConnection extends Channel{
   }
 
   //sync chain
-  private BlockId headBlockWeBothHave;
+  private BlockId headBlockWeBothHave = new BlockId();
 
   private long headBlockTimeWeBothHave;
 
@@ -115,8 +130,7 @@ public class PeerConnection extends Channel{
 
 
   public void cleanInvGarbage() {
-    //TODO: clean advObjSpreadToUs and advObjWeSpread accroding cleaning strategy 
-
+    //TODO: clean advObjSpreadToUs and advObjWeSpread accroding cleaning strategy
   }
 
   public boolean isBanned() {
@@ -185,33 +199,40 @@ public class PeerConnection extends Channel{
 //    long lifeTime = System.currentTimeMillis() - connectedTime;
     return String.format(
         "Peer %s: [ %18s, ping %6s ms]-----------\n"
+            + "connect time: %s\n"
             + "last know block num: %s\n "
             + "needSyncFromPeer:%b\n "
             + "needSyncFromUs:%b\n"
             + "syncToFetchSize:%d\n"
             + "syncBlockRequestedSize:%d\n"
             + "unFetchSynNum:%d\n"
+            + "syncChainRequested:%s\n"
             + "blockInPorc:%d\n",
         this.getNode().getHost() + ":" + this.getNode().getPort(),
         this.getPeerIdShort(),
         (int)this.getPeerStats().getAvgLatency(),
+        Time.getTimeString(getConnectTime()),
         headBlockWeBothHave.getNum(),
         isNeedSyncFromPeer(),
         isNeedSyncFromUs(),
         syncBlockToFetch.size(),
         syncBlockRequested.size(),
         unfetchSyncNum,
+        syncChainRequested == null ? "NULL" : Time.getTimeString(syncChainRequested.getValue()),
         blockInProc.size());
   }
 
   public boolean isBusy() {
-    return !advObjWeRequested.isEmpty()
-        && !syncBlockRequested.isEmpty()
-        && syncChainRequested != null;
+    return !idle();
+  }
+
+  public boolean idle() {
+    return advObjWeRequested.isEmpty()
+        && syncBlockRequested.isEmpty()
+        && syncChainRequested == null;
   }
 
   public void sendMessage(Message message) {
-    //logger.info("nodeimpl send message" + message);
     msgQueue.sendMessage(message);
     nodeStatistics.ethOutbound.add();
   }

@@ -94,9 +94,7 @@ public class NodeManager implements Consumer<DiscoveryEvent> {
 
     this.pongTimer = Executors.newSingleThreadScheduledExecutor();
 
-    for (Node node : args.getNodeActive()) {
-        getNodeHandler(node).getNodeStatistics().setPredefined(true);
-    }
+
   }
 
   public ScheduledExecutorService getPongTimer() {
@@ -132,7 +130,17 @@ public class NodeManager implements Consumer<DiscoveryEvent> {
       for (Node node : bootNodes) {
         getNodeHandler(node);
       }
+
+      for (Node node : args.getNodeActive()) {
+        getNodeHandler(node).getNodeStatistics().setPredefined(true);
+      }
     }
+  }
+
+  public boolean isNodeAlive(NodeHandler nodeHandler){
+    return  nodeHandler.state.equals(State.Alive) ||
+            nodeHandler.state.equals(State.Active) ||
+            nodeHandler.state.equals(State.EvictCandidate);
   }
 
   private void dbRead() {
@@ -145,7 +153,7 @@ public class NodeManager implements Consumer<DiscoveryEvent> {
     Set<Node> batch = new HashSet<>();
     synchronized (this) {
       for (NodeHandler nodeHandler: nodeHandlerMap.values()){
-        if (nodeHandler.state != NodeHandler.State.Dead){
+        if (isNodeAlive(nodeHandler)) {
           batch.add(nodeHandler.getNode());
         }
       }
@@ -232,6 +240,9 @@ public class NodeManager implements Consumer<DiscoveryEvent> {
     switch (type) {
       case 1:
         nodeHandler.handlePing((PingMessage) m);
+        if(nodeHandler.getState().equals(State.NonActive) || nodeHandler.getState().equals(State.Dead)){
+            nodeHandler.changeState(State.Discovered);
+        }
         break;
       case 2:
         nodeHandler.handlePong((PongMessage) m);
@@ -283,7 +294,7 @@ public class NodeManager implements Consumer<DiscoveryEvent> {
     List<NodeHandler> handlers = new ArrayList<>();
     for (NodeHandler handler :
         this.nodeHandlerMap.values()) {
-      if (handler.state == State.Alive || handler.state == State.Active) {
+      if (handler.state == State.Alive || handler.state == State.Active || handler.state == State.EvictCandidate) {
         handlers.add(handler);
       }
     }

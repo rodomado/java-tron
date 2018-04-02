@@ -24,6 +24,8 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.tron.api.GrpcAPI.AccountList;
 import org.tron.api.GrpcAPI.AssetIssueList;
+import org.tron.api.GrpcAPI.NumberMessage;
+import org.tron.api.GrpcAPI.NumberMessage.Builder;
 import org.tron.api.GrpcAPI.WitnessList;
 import org.tron.common.application.Application;
 import org.tron.common.crypto.ECKey;
@@ -118,10 +120,10 @@ public class Wallet {
   /**
    * Create a transaction.
    */
-  public Transaction createTransaction(byte[] address, String to, long amount) {
+  /*public Transaction createTransaction(byte[] address, String to, long amount) {
     long balance = getBalance(address);
     return new TransactionCapsule(address, to, amount, balance, utxoStore).getInstance();
-  }
+  } */
 
   /**
    * Create a transaction by contract.
@@ -144,13 +146,13 @@ public class Wallet {
         return true;
       }
     } catch (ValidateSignatureException e) {
-      e.printStackTrace();
+      logger.debug(e.getMessage(), e);
     } catch (ContractValidateException e) {
-      e.printStackTrace();
+      logger.debug(e.getMessage(), e);
     } catch (ContractExeException e) {
-      e.printStackTrace();
+      logger.debug(e.getMessage(), e);
     } catch (Exception e) {
-      e.printStackTrace();
+      logger.debug(e.getMessage(), e);
     }
     return false;
   }
@@ -247,5 +249,11 @@ public class Wallet {
       }
     }
     return null;
+  }
+
+  public NumberMessage totalTransaction() {
+    Builder builder = NumberMessage.newBuilder()
+        .setNum(dbManager.getTransactionStore().getTotalTransactions());
+    return builder.build();
   }
 }

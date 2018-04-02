@@ -113,6 +113,8 @@ public class MessageQueue {
 
   public void receivedMessage(Message msg) throws InterruptedException {
 
+    logger.info("rcv from peer[{}], size:{} data:{}", ctx.channel().remoteAddress(), msg.getSendData().readableBytes(), msg.toString());
+
     if (requestQueue.peek() != null) {
       MessageRoundtrip messageRoundtrip = requestQueue.peek();
       Message waitingMessage = messageRoundtrip.getMsg();
@@ -127,7 +129,7 @@ public class MessageQueue {
   }
 
   private void removeAnsweredMessage(MessageRoundtrip messageRoundtrip) {
-    if (messageRoundtrip != null && messageRoundtrip.isAnswered())
+    if (messageRoundtrip != null && messageRoundtrip.isAnswered()) 
       requestQueue.remove();
   }
 
@@ -141,21 +143,32 @@ public class MessageQueue {
 
   private void sendToWire(MessageRoundtrip messageRoundtrip) {
 
-    if (messageRoundtrip != null && messageRoundtrip.getRetryTimes() == 0) {
-      // TODO: retry logic || messageRoundtrip.hasToRetry()){
-
-      Message msg = messageRoundtrip.getMsg();
-
-      //TODO#p2p#peerDel : let node know
-
-      ctx.writeAndFlush(msg.getSendData())
-          .addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
-
-      if (msg.getAnswerMessage() != null) {
-        messageRoundtrip.incRetryTimes();
-        messageRoundtrip.saveTime();
-      }
+    if (messageRoundtrip == null){
+      return;
     }
+
+    if (messageRoundtrip.getRetryTimes() > 0 && !messageRoundtrip.hasToRetry()){
+      return;
+    }
+
+    if (messageRoundtrip.getRetryTimes() > 0){
+      logger.info("send msg timeout. close channel {}.", ctx.channel().remoteAddress());
+      ctx.close();
+      return;
+    }
+
+    Message msg = messageRoundtrip.getMsg();
+
+    ctx.writeAndFlush(msg.getSendData())
+            .addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
+
+    if (msg.getAnswerMessage() != null) {
+      messageRoundtrip.incRetryTimes();
+      messageRoundtrip.saveTime();
+    }
+
+    logger.info("send to peer[{}] retry[{}], length:{} data:{}", ctx.channel().remoteAddress(),
+            messageRoundtrip.getRetryTimes(), msg.getSendData().readableBytes(), msg.toString());
   }
 
   public void close() {
