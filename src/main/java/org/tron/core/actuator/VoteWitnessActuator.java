@@ -96,7 +96,7 @@ public class VoteWitnessActuator extends AbstractActuator {
     AccountCapsule accountCapsule = dbManager.getAccountStore()
         .get(voteContract.getOwnerAddress().toByteArray());
 
-    accountCapsule.setInstance(accountCapsule.getInstance().toBuilder().clearVotes().build());
+    // accountCapsule.setInstance(accountCapsule.getInstance().toBuilder().clearVotes().build());
 
     voteContract.getVotesList().forEach(vote -> {
       //  String toStringUtf8 = vote.getVoteAddress().toStringUtf8();

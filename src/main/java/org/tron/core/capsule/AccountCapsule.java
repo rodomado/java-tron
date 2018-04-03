@@ -168,7 +168,7 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
    */
   public void addVotes(ByteString voteAddress, long voteAdd) {
     this.account = this.account.toBuilder()
-        .addVotes(Vote.newBuilder().setVoteAddress(voteAddress).setVoteCount(voteAdd).build())
+        .addVotes(Vote.newBuilder().setVoteAddress(voteAddress).setVoteCount(voteAdd).setTimestamp(System.currentTimeMillis()).build())
         .build();
   }
 

@@ -182,6 +182,10 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
     return nextMaintenanceTime;
   }
 
+  public long getMaintenanceTimeInterval(){
+    return MAINTENANCE_TIME_INTERVAL;
+  }
+
 
   private void setNextMaintenanceTime(DateTime nextMaintenanceTime) {
     this.nextMaintenanceTime = nextMaintenanceTime;

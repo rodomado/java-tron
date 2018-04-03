@@ -669,7 +669,7 @@ public class Manager {
   public boolean processTransaction(final TransactionCapsule trxCap)
       throws ValidateSignatureException, ContractValidateException, ContractExeException {
 
-    TransactionResultCapsule transRet;
+    //TransactionResultCapsule transRet;
     if (trxCap == null || !trxCap.validateSignature()) {
       return false;
     }
@@ -974,11 +974,16 @@ public class Manager {
 //      logger.info("there is account ,account address is {}",
 //          account.createReadableString());
 
-      Optional<Long> sum = account.getVotesList().stream().map(vote -> vote.getVoteCount())
+      Optional<Long> sum = account.getVotesList().stream().filter(vote ->
+          (this.dynamicPropertiesStore.getNextMaintenanceTime().getMillis()-vote.getTimestamp()
+              <this.dynamicPropertiesStore.getMaintenanceTimeInterval()))
+          .map(vote -> vote.getVoteCount())
           .reduce((a, b) -> a + b);
       if (sum.isPresent()) {
         if (sum.get() <= account.getShare()) {
-          account.getVotesList().forEach(vote -> {
+          account.getVotesList().stream().filter(vote ->
+              (this.dynamicPropertiesStore.getNextMaintenanceTime().getMillis()-vote.getTimestamp()
+                  <this.dynamicPropertiesStore.getMaintenanceTimeInterval())).forEach(vote -> {
             //TODO validate witness //active_witness
             ByteString voteAddress = vote.getVoteAddress();
             long voteCount = vote.getVoteCount();
@@ -991,7 +996,7 @@ public class Manager {
         } else {
           logger.info(
               "account" + account.createReadableString() + ",share[" + account.getShare()
-                  + "] > voteSum["
+                  + "] < voteSum["
                   + sum.get() + "]");
         }
       }
