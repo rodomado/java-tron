@@ -975,15 +975,16 @@ public class Manager {
 //          account.createReadableString());
 
       Optional<Long> sum = account.getVotesList().stream().filter(vote ->
-          (this.dynamicPropertiesStore.getNextMaintenanceTime().getMillis()-vote.getTimestamp()
-              <this.dynamicPropertiesStore.getMaintenanceTimeInterval()))
+          (this.dynamicPropertiesStore.getNextMaintenanceTime().getMillis() - vote.getTimestamp()
+              < this.dynamicPropertiesStore.getMaintenanceTimeInterval()))
           .map(vote -> vote.getVoteCount())
           .reduce((a, b) -> a + b);
       if (sum.isPresent()) {
         if (sum.get() <= account.getShare()) {
           account.getVotesList().stream().filter(vote ->
-              (this.dynamicPropertiesStore.getNextMaintenanceTime().getMillis()-vote.getTimestamp()
-                  <this.dynamicPropertiesStore.getMaintenanceTimeInterval())).forEach(vote -> {
+              (this.dynamicPropertiesStore.getNextMaintenanceTime().getMillis() - vote
+                  .getTimestamp()
+                  < this.dynamicPropertiesStore.getMaintenanceTimeInterval())).forEach(vote -> {
             //TODO validate witness //active_witness
             ByteString voteAddress = vote.getVoteAddress();
             long voteCount = vote.getVoteCount();
@@ -1010,37 +1011,40 @@ public class Manager {
     final List<WitnessCapsule> witnessCapsuleList = Lists.newArrayList();
     logger.info("countWitnessMap size is {}", countWitness.keySet().size());
 
-    //Only possible during the initialization phase
     if (countWitness.size() == 0) {
-      witnessCapsuleList.addAll(this.witnessStore.getAllWitnesses());
-    }
-
-    countWitness.forEach((address, voteCount) -> {
-      final WitnessCapsule witnessCapsule = this.witnessStore.get(createDbKey(address));
-      if (null == witnessCapsule) {
-        logger.warn("witnessCapsule is null.address is {}", createReadableString(address));
-        return;
-      }
-
-      ByteString witnessAddress = witnessCapsule.getInstance().getAddress();
-      AccountCapsule witnessAccountCapsule = accountStore.get(createDbKey(witnessAddress));
-      if (witnessAccountCapsule == null) {
-        logger.warn("witnessAccount[" + createReadableString(witnessAddress) + "] not exists");
+      if (this.head.getNum() == 0) {
+        witnessCapsuleList.addAll(this.witnessStore.getAllWitnesses());
       } else {
-        if (witnessAccountCapsule.getBalance() < WitnessCapsule.MIN_BALANCE) {
-          logger.warn("witnessAccount[" + createReadableString(witnessAddress) + "] has balance["
-              + witnessAccountCapsule
-              .getBalance() + "] < MIN_BALANCE[" + WitnessCapsule.MIN_BALANCE + "]");
-        } else {
-          witnessCapsule.setVoteCount(witnessCapsule.getVoteCount() + voteCount);
-          witnessCapsule.setIsJobs(false);
-          witnessCapsuleList.add(witnessCapsule);
-          this.witnessStore.put(witnessCapsule.createDbKey(), witnessCapsule);
-          logger.info("address is {}  ,countVote is {}", witnessCapsule.createReadableString(),
-              witnessCapsule.getVoteCount());
-        }
+        witnessCapsuleList.addAll(this.getWitnesses());
       }
-    });
+    } else {
+      countWitness.forEach((address, voteCount) -> {
+        final WitnessCapsule witnessCapsule = this.witnessStore.get(createDbKey(address));
+        if (null == witnessCapsule) {
+          logger.warn("witnessCapsule is null.address is {}", createReadableString(address));
+          return;
+        }
+
+        ByteString witnessAddress = witnessCapsule.getInstance().getAddress();
+        AccountCapsule witnessAccountCapsule = accountStore.get(createDbKey(witnessAddress));
+        if (witnessAccountCapsule == null) {
+          logger.warn("witnessAccount[" + createReadableString(witnessAddress) + "] not exists");
+        } else {
+          if (witnessAccountCapsule.getBalance() < WitnessCapsule.MIN_BALANCE) {
+            logger.warn("witnessAccount[" + createReadableString(witnessAddress) + "] has balance["
+                + witnessAccountCapsule
+                .getBalance() + "] < MIN_BALANCE[" + WitnessCapsule.MIN_BALANCE + "]");
+          } else {
+            witnessCapsule.setVoteCount(witnessCapsule.getVoteCount() + voteCount);
+            witnessCapsule.setIsJobs(false);
+            witnessCapsuleList.add(witnessCapsule);
+            this.witnessStore.put(witnessCapsule.createDbKey(), witnessCapsule);
+            logger.info("address is {}  ,countVote is {}", witnessCapsule.createReadableString(),
+                witnessCapsule.getVoteCount());
+          }
+        }
+      });
+    }
     sortWitness(witnessCapsuleList);
     if (witnessCapsuleList.size() > MAX_ACTIVE_WITNESS_NUM) {
       setWitnesses(witnessCapsuleList.subList(0, MAX_ACTIVE_WITNESS_NUM));
